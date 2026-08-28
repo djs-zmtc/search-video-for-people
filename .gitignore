@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Image/Video Files
+*.mp4
+*.mkv
+*.avi
+*.mov
+
+# AI Model Files
+*.pt
+
