@@ -5,18 +5,21 @@ import cv2
 import imageio_ffmpeg
 from ultralytics import YOLO
 
-# Suppress Python-level warnings
+# Suppress Python-level warnings[cite: 2]
 os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
 os.environ["AV_LOG_FORCE_NOCOLOR"] = "1"
 
 ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-model = YOLO("yolo11m.pt")
+
+# Upgrade to extra-large model for superior IR feature detection
+model = YOLO("yolo11x.pt")
 
 INPUT_DIR = "./repaired_videos"
 OUTPUT_DIR = "./person_clips"
 PAD_SECONDS = 15
 STRIDE = 5
-CONF_THRESHOLD = 0.45
+CONF_THRESHOLD = 0.60        # Raised to filter out IR reflections and cobwebs
+REQUIRED_CONSECUTIVE = 2     # Must detect in 2 sampled frames in a row
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def merge_intervals(intervals, max_duration):
@@ -56,8 +59,9 @@ for idx, filename in enumerate(video_files, 1):
 
     detected_timestamps = []
     frame_idx = 0
+    consecutive_hits = 0
 
-    # Temporarily redirect low-level C stderr (FFmpeg console chatter)
+    # Define low-level file descriptors BEFORE entering try block
     stderr_fd = sys.stderr.fileno()
     saved_stderr = os.dup(stderr_fd)
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -76,18 +80,22 @@ for idx, filename in enumerate(video_files, 1):
 
             results = model.predict(
                 source=frame,
-                classes=[0],
+                classes=[0],           # 0 = person
                 conf=CONF_THRESHOLD,
-                device=0,
+                device=0,              # RTX 4070 Ti SUPER
                 verbose=False
             )
 
             if len(results[0].boxes) > 0:
-                timestamp = frame_idx / fps
-                detected_timestamps.append(timestamp)
+                consecutive_hits += 1
+                if consecutive_hits >= REQUIRED_CONSECUTIVE:
+                    timestamp = frame_idx / fps
+                    detected_timestamps.append(timestamp)
+            else:
+                consecutive_hits = 0
 
     finally:
-        # Restore normal console stderr output
+        # Safely restore normal console stderr output[cite: 2]
         os.dup2(saved_stderr, stderr_fd)
         os.close(saved_stderr)
         os.close(devnull)
@@ -97,7 +105,7 @@ for idx, filename in enumerate(video_files, 1):
         print("  -> No person detected.")
         continue
 
-    # Use actual decoded duration rather than metadata in case of truncation
+    # Calculate actual decoded duration[cite: 2]
     video_duration = frame_idx / fps
     raw_events = [(t, t) for t in detected_timestamps]
     segments = merge_intervals(raw_events, video_duration)
@@ -111,7 +119,7 @@ for idx, filename in enumerate(video_files, 1):
 
         cmd = [
             ffmpeg_exe, "-y",
-            "-err_detect", "ignore_err",   # Tell FFmpeg to ignore trailing malformed slices
+            "-err_detect", "ignore_err",
             "-ss", f"{start_sec:.2f}",
             "-i", video_path,
             "-t", f"{duration:.2f}",
