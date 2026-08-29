@@ -3,11 +3,14 @@ name = "yolo-project"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-authors = [
-    { name = "Doug Sweeney [RAZORBACK]", email = "douglas.sweeney@zmtcreative.com" }
-]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "torch",
+    "torchvision",
+    "ultralytics",
+    "opencv-python",
+    "imageio-ffmpeg",
+]
 
 [project.scripts]
 yolo-project = "yolo_project:main"
@@ -15,3 +18,12 @@ yolo-project = "yolo_project:main"
 [build-system]
 requires = ["uv_build>=0.12.6,<0.13.0"]
 build-backend = "uv_build"
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
