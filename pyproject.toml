@@ -1,7 +1,7 @@
 [project]
-name = "yolo-project"
+name = "search-video-for-people"
 version = "0.1.0"
-description = "Add your description here"
+description = "Pipeline to search security video for people using YOLO and FFmpeg"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,12 +12,8 @@ dependencies = [
     "imageio-ffmpeg",
 ]
 
-[project.scripts]
-yolo-project = "yolo_project:main"
-
-[build-system]
-requires = ["uv_build>=0.12.6,<0.13.0"]
-build-backend = "uv_build"
+[tool.uv]
+package = false
 
 [[tool.uv.index]]
 name = "pytorch-cu124"
