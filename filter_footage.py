@@ -33,6 +33,12 @@ def parse_args():
         help="YOLO model weights path (default: yolo11x.pt)"
     )
     parser.add_argument(
+        "--select-model",
+        action="store_true",
+        default=False,
+        help="Interactively select model (1 for yolo11x.pt, 2 for yolo11m.pt, 3 for yolo11s.pt)"
+    )
+    parser.add_argument(
         "--conf", "-c",
         type=float,
         default=0.50,
@@ -86,6 +92,33 @@ def parse_args():
         help="Compute device (0, 'mps', 'cpu'). If omitted, automatically selects fastest available."
     )
     return parser.parse_args()
+
+def prompt_model_selection():
+    """Interactively prompt user to select a YOLO model."""
+    print("\n" + "=" * 50)
+    print(" Select a YOLO Model:")
+    print("  [1] yolo11x.pt (Extra-Large: Maximum Accuracy / Best for GPU & Night IR)")
+    print("  [2] yolo11m.pt (Medium: Fast & Balanced)")
+    print("  [3] yolo11s.pt (Small: Very Fast & Lightweight)")
+    print("=" * 50)
+    while True:
+        try:
+            choice = input("Enter choice [1, 2, or 3] (default: 1): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nSelection cancelled. Defaulting to yolo11x.pt.")
+            return "yolo11x.pt"
+
+        if choice in ("", "1"):
+            print("Selected: yolo11x.pt\n")
+            return "yolo11x.pt"
+        elif choice == "2":
+            print("Selected: yolo11m.pt\n")
+            return "yolo11m.pt"
+        elif choice == "3":
+            print("Selected: yolo11s.pt\n")
+            return "yolo11s.pt"
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.")
 
 def resolve_device(device_override=None):
     if device_override is not None:
@@ -243,4 +276,6 @@ def process_footage(args):
 
 if __name__ == "__main__":
     args = parse_args()
+    if args.select_model:
+        args.model = prompt_model_selection()
     process_footage(args)
