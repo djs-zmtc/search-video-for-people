@@ -16,6 +16,10 @@ wheels/
 *.mkv
 *.avi
 *.mov
+*.dat
+*.jpg
+*.png
+*.bmp
 
 # AI Model Files
 *.pt

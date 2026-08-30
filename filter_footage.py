@@ -2,24 +2,35 @@ import os
 import sys
 import subprocess
 import cv2
+import torch
 import imageio_ffmpeg
 from ultralytics import YOLO
 
-# Suppress Python-level warnings[cite: 2]
+# Suppress Python-level warnings[cite: 1]
 os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
 os.environ["AV_LOG_FORCE_NOCOLOR"] = "1"
 
+# Dynamically select the best available accelerator hardware
+if torch.cuda.is_available():
+    DEVICE = 0          # NVIDIA or AMD ROCm
+elif torch.backends.mps.is_available():
+    DEVICE = "mps"      # Apple Silicon
+else:
+    DEVICE = "cpu"      # Universal CPU fallback
+
+print(f"Using compute device: {DEVICE}")
+
 ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
-# Upgrade to extra-large model for superior IR feature detection
+# Upgrade to extra-large model for superior IR feature detection[cite: 1]
 model = YOLO("yolo11x.pt")
 
 INPUT_DIR = "./repaired_videos"
 OUTPUT_DIR = "./person_clips"
 PAD_SECONDS = 15
 STRIDE = 5
-CONF_THRESHOLD = 0.60        # Raised to filter out IR reflections and cobwebs
-REQUIRED_CONSECUTIVE = 2     # Must detect in 2 sampled frames in a row
+CONF_THRESHOLD = 0.60        # Raised to filter out IR reflections and cobwebs[cite: 1]
+REQUIRED_CONSECUTIVE = 2     # Must detect in 2 sampled frames in a row[cite: 1]
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def merge_intervals(intervals, max_duration):
@@ -61,7 +72,7 @@ for idx, filename in enumerate(video_files, 1):
     frame_idx = 0
     consecutive_hits = 0
 
-    # Define low-level file descriptors BEFORE entering try block
+    # Define low-level file descriptors BEFORE entering try block[cite: 1]
     stderr_fd = sys.stderr.fileno()
     saved_stderr = os.dup(stderr_fd)
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -80,9 +91,9 @@ for idx, filename in enumerate(video_files, 1):
 
             results = model.predict(
                 source=frame,
-                classes=[0],           # 0 = person
+                classes=[0],           # 0 = person[cite: 1]
                 conf=CONF_THRESHOLD,
-                device=0,              # RTX 4070 Ti SUPER
+                device=DEVICE,         # Dynamically resolved hardware accelerator
                 verbose=False
             )
 
@@ -95,7 +106,7 @@ for idx, filename in enumerate(video_files, 1):
                 consecutive_hits = 0
 
     finally:
-        # Safely restore normal console stderr output[cite: 2]
+        # Safely restore normal console stderr output[cite: 1]
         os.dup2(saved_stderr, stderr_fd)
         os.close(saved_stderr)
         os.close(devnull)
@@ -105,7 +116,7 @@ for idx, filename in enumerate(video_files, 1):
         print("  -> No person detected.")
         continue
 
-    # Calculate actual decoded duration[cite: 2]
+    # Calculate actual decoded duration[cite: 1]
     video_duration = frame_idx / fps
     raw_events = [(t, t) for t in detected_timestamps]
     segments = merge_intervals(raw_events, video_duration)
