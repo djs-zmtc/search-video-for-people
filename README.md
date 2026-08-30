@@ -4,6 +4,18 @@ A pipeline to prepare, scan, and extract lightweight video clips of detected peo
 
 ---
 
+## Installation & Setup
+
+For full platform-specific setup instructions (Windows PowerShell and Linux bash), see **[INSTALL.md](INSTALL.md)**.
+
+### Quick Setup:
+```bash
+# Install dependencies with uv (automatically configures PyTorch + CUDA)
+uv sync
+```
+
+---
+
 ## Quick Start / Run Order
 
 ### Step 1: Prepare & Verify Source Videos
