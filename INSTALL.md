@@ -30,7 +30,7 @@ This guide walks you through configuring the Python and YOLO environment from sc
 
 2. **Clone the repository and enter the directory**:
    ```powershell
-   git clone <REPO_URL>
+   git clone https://github.com/djs-zmtc/search-video-for-people.git
    cd search-video-for-people
    ```
 
@@ -72,7 +72,7 @@ This guide walks you through configuring the Python and YOLO environment from sc
 
 3. **Clone the repository and enter the directory**:
    ```bash
-   git clone <REPO_URL>
+   git clone https://github.com/djs-zmtc/search-video-for-people.git
    cd search-video-for-people
    ```
 

@@ -10,6 +10,10 @@ For full platform-specific setup instructions (Windows PowerShell and Linux bash
 
 ### Quick Setup:
 ```bash
+# Clone the repository
+git clone https://github.com/djs-zmtc/search-video-for-people.git
+cd search-video-for-people
+
 # Install dependencies with uv (automatically configures PyTorch + CUDA)
 uv sync
 ```
