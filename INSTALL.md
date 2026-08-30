@@ -31,7 +31,7 @@ This guide walks you through configuring the Python and YOLO environment from sc
 2. **Clone the repository and enter the directory**:
    ```powershell
    git clone <REPO_URL>
-   cd yolo_project
+   cd search-video-for-people
    ```
 
 3. **Install all dependencies and create the virtual environment**:
@@ -73,7 +73,7 @@ This guide walks you through configuring the Python and YOLO environment from sc
 3. **Clone the repository and enter the directory**:
    ```bash
    git clone <REPO_URL>
-   cd yolo_project
+   cd search-video-for-people
    ```
 
 4. **Install all dependencies and create the virtual environment**:
@@ -127,7 +127,7 @@ pip install ultralytics opencv-python imageio-ffmpeg
 
 ## Model Weights & First Run
 
-The YOLO model weights (e.g. `yolo11x.pt` or `yolo11m.pt`) are automatically downloaded from Ultralytics assets the first time you run [`filter_footage.py`](file:///c:/Users/dougl/Projects/yolo_project/filter_footage.py).
+The YOLO model weights (e.g. `yolo11x.pt` or `yolo11m.pt`) are automatically downloaded from Ultralytics assets the first time you run [`filter_footage.py`](file:///c:/Users/dougl/Projects/search-video-for-people/filter_footage.py).
 
 If you are deploying to an offline machine or wish to pre-fetch the weights:
 ```bash
