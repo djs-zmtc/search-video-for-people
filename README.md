@@ -79,6 +79,7 @@ uv run python compact_video_clips.py --input-dir ./person_clips --output-dir ./p
 |---|---|---|
 | `-i`, `--input-dir` | `./repaired_videos` | Directory of prepared videos to scan |
 | `-o`, `--output-dir`| `./person_clips` | Directory to save extracted clips |
+| `-l`, `--log-dir`   | `./log`          | Directory to save session run logs (`person-found_{datestamp}.log`) |
 | `-m`, `--model` | `yolo11x.pt` | YOLO model weights (`yolo11x.pt`, `yolo11m.pt`, `yolo11s.pt`, etc.) |
 | `--select-model` | `False` | Interactively prompt to select model: `yolo11x.pt` (1), `yolo11m.pt` (2), or `yolo11s.pt` (3) |
 | `-c`, `--conf` | `0.50` | Detection confidence threshold |

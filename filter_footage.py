@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import subprocess
+from datetime import datetime
 import cv2
 import torch
 import imageio_ffmpeg
@@ -26,6 +27,11 @@ def parse_args():
         "--output-dir", "-o",
         default="./person_clips",
         help="Directory to save extracted person clips (default: ./person_clips)"
+    )
+    parser.add_argument(
+        "--log-dir", "-l",
+        default="./log",
+        help="Directory to save run logs (default: ./log)"
     )
     parser.add_argument(
         "--model", "-m",
@@ -129,6 +135,13 @@ def resolve_device(device_override=None):
         return "mps"
     return "cpu"
 
+def format_time_hms(seconds):
+    """Format seconds into HH:MM:SS.ss string."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:05.2f}"
+
 def merge_intervals(intervals, max_duration, pad_seconds):
     if not intervals:
         return []
@@ -147,132 +160,165 @@ def merge_intervals(intervals, max_duration, pad_seconds):
     return merged
 
 def process_footage(args):
-    device = resolve_device(args.device)
-    print(f"Using compute device: {device}")
-    print(f"Loading YOLO model: {args.model}...")
-    model = YOLO(args.model)
+    start_time = datetime.now()
+    datestamp = start_time.strftime("%Y%m%dT%H%M%S")
+    os.makedirs(args.log_dir, exist_ok=True)
+    log_filename = f"person-found_{datestamp}.log"
+    log_path = os.path.join(args.log_dir, log_filename)
 
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    os.makedirs(args.output_dir, exist_ok=True)
+    log_file = open(log_path, "w", encoding="utf-8")
+    log_file.write(f"=== Session Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')} (ISO: {start_time.isoformat()}) ===\n\n")
+    log_file.flush()
 
-    if not os.path.exists(args.input_dir):
-        print(f"Input directory '{args.input_dir}' not found. Please run repair_clips.py or place footage there.")
-        return
+    try:
+        device = resolve_device(args.device)
+        print(f"Using compute device: {device}")
+        print(f"Loading YOLO model: {args.model}...")
+        model = YOLO(args.model)
 
-    video_extensions = (".mp4", ".mkv", ".avi", ".mov")
-    video_files = [f for f in os.listdir(args.input_dir) if f.lower().endswith(video_extensions)]
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        os.makedirs(args.output_dir, exist_ok=True)
 
-    if not video_files:
-        print(f"No video files found in '{args.input_dir}'.")
-        return
+        if not os.path.exists(args.input_dir):
+            print(f"Input directory '{args.input_dir}' not found. Please run repair_clips.py or place footage there.")
+            return
 
-    print(f"Found {len(video_files)} video(s) to process.\n")
+        video_extensions = (".mp4", ".mkv", ".avi", ".mov")
+        video_files = [f for f in os.listdir(args.input_dir) if f.lower().endswith(video_extensions)]
 
-    for idx, filename in enumerate(video_files, 1):
-        video_path = os.path.join(args.input_dir, filename)
-        name_stem, _ = os.path.splitext(filename)
-        print(f"[{idx}/{len(video_files)}] Scanning: {filename}...")
+        if not video_files:
+            print(f"No video files found in '{args.input_dir}'.")
+            return
 
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            print(f"  -> WARNING: Could not open {filename}")
-            continue
+        print(f"Session log: {log_path}")
+        print(f"Found {len(video_files)} video(s) to process.\n")
 
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        if not fps or fps <= 0:
-            fps = 25.0
+        for idx, filename in enumerate(video_files, 1):
+            video_path = os.path.join(args.input_dir, filename)
+            name_stem, _ = os.path.splitext(filename)
+            print(f"[{idx}/{len(video_files)}] Scanning: {filename}...")
 
-        detected_timestamps = []
-        pending_streak = []
-        frame_idx = 0
-        last_timestamp = 0.0
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                print(f"  -> WARNING: Could not open {filename}")
+                continue
 
-        try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if not fps or fps <= 0:
+                fps = 25.0
 
-                frame_idx += 1
+            detected_timestamps = []
+            pending_streak = []
+            frame_idx = 0
+            last_timestamp = 0.0
 
-                # Use actual presentation timestamp (PTS) to prevent VFR drift; fallback to frame count
-                pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-                if pos_msec > 0:
-                    current_time = pos_msec / 1000.0
-                else:
-                    current_time = frame_idx / fps
-                last_timestamp = max(last_timestamp, current_time)
+            try:
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                if frame_idx % args.stride != 0:
-                    continue
+                    frame_idx += 1
 
-                results = model.predict(
-                    source=frame,
-                    classes=[0],           # 0 = person
-                    conf=args.conf,
-                    device=device,
-                    verbose=False
-                )
+                    # Use actual presentation timestamp (PTS) to prevent VFR drift; fallback to frame count
+                    pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+                    if pos_msec > 0:
+                        current_time = pos_msec / 1000.0
+                    else:
+                        current_time = frame_idx / fps
+                    last_timestamp = max(last_timestamp, current_time)
 
-                if len(results[0].boxes) > 0:
-                    pending_streak.append(current_time)
-                    if len(pending_streak) >= args.consecutive:
-                        detected_timestamps.extend(pending_streak)
+                    if frame_idx % args.stride != 0:
+                        continue
+
+                    results = model.predict(
+                        source=frame,
+                        classes=[0],           # 0 = person
+                        conf=args.conf,
+                        device=device,
+                        verbose=False
+                    )
+
+                    if len(results[0].boxes) > 0:
+                        pending_streak.append(current_time)
+                        if len(pending_streak) >= args.consecutive:
+                            detected_timestamps.extend(pending_streak)
+                            pending_streak = []
+                    else:
                         pending_streak = []
+
+            finally:
+                cap.release()
+
+            if not detected_timestamps:
+                print("  -> No person detected.")
+                continue
+
+            detected_timestamps = sorted(list(set(detected_timestamps)))
+            video_duration = last_timestamp if last_timestamp > 0 else (frame_idx / fps)
+            raw_events = [(t, t) for t in detected_timestamps]
+            segments = merge_intervals(raw_events, video_duration, args.pad)
+
+            print(f"  -> Found {len(detected_timestamps)} detection points. Extracting {len(segments)} padded segment(s)...")
+
+            for seg_idx, (start_sec, end_sec) in enumerate(segments, 1):
+                duration = end_sec - start_sec
+                out_filename = f"{name_stem}_person_{seg_idx:02d}.mp4"
+                out_path = os.path.join(args.output_dir, out_filename)
+
+                # Find earliest detection timestamp within this segment
+                detections_in_segment = [t for t in detected_timestamps if start_sec <= t <= end_sec]
+                first_detect = min(detections_in_segment) if detections_in_segment else start_sec
+
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                log_entry = (
+                    f"[{now_str}] Source: {filename} | "
+                    f"Detection Timestamp: {format_time_hms(first_detect)} ({first_detect:.2f}s) | "
+                    f"Clip: {out_filename} (Segment: {format_time_hms(start_sec)} to {format_time_hms(end_sec)})\n"
+                )
+                log_file.write(log_entry)
+                log_file.flush()
+
+                # Build FFmpeg command with frame-accurate re-encoding & optional one-pass compaction
+                cmd = [
+                    ffmpeg_exe, "-y",
+                    "-err_detect", "ignore_err",
+                    "-ss", f"{start_sec:.2f}",
+                    "-i", video_path,
+                    "-t", f"{duration:.2f}",
+                ]
+
+                if args.compact:
+                    # Proportional scaling without distortion + framerate reduction
+                    vf_filters = f"scale='min({args.max_width},iw)':-2,fps={args.fps}"
+                    cmd.extend(["-vf", vf_filters])
+
+                cmd.extend([
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", str(args.crf),
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-movflags", "+faststart",
+                    out_path
+                ])
+
+                result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if result.returncode == 0 and os.path.exists(out_path):
+                    out_size_mb = os.path.getsize(out_path) / (1024 * 1024)
+                    print(f"     Saved: {out_filename} [{start_sec:.1f}s to {end_sec:.1f}s | Duration: {duration:.1f}s | {out_size_mb:.1f} MB]")
                 else:
-                    pending_streak = []
+                    print(f"     ERROR: Failed to extract segment {seg_idx} for {filename}")
 
-        finally:
-            cap.release()
-
-        if not detected_timestamps:
-            print("  -> No person detected.")
-            continue
-
-        detected_timestamps = sorted(list(set(detected_timestamps)))
-        video_duration = last_timestamp if last_timestamp > 0 else (frame_idx / fps)
-        raw_events = [(t, t) for t in detected_timestamps]
-        segments = merge_intervals(raw_events, video_duration, args.pad)
-
-        print(f"  -> Found {len(detected_timestamps)} detection points. Extracting {len(segments)} padded segment(s)...")
-
-        for seg_idx, (start_sec, end_sec) in enumerate(segments, 1):
-            duration = end_sec - start_sec
-            out_filename = f"{name_stem}_person_{seg_idx:02d}.mp4"
-            out_path = os.path.join(args.output_dir, out_filename)
-
-            # Build FFmpeg command with frame-accurate re-encoding & optional one-pass compaction
-            cmd = [
-                ffmpeg_exe, "-y",
-                "-err_detect", "ignore_err",
-                "-ss", f"{start_sec:.2f}",
-                "-i", video_path,
-                "-t", f"{duration:.2f}",
-            ]
-
-            if args.compact:
-                # Proportional scaling without distortion + framerate reduction
-                vf_filters = f"scale='min({args.max_width},iw)':-2,fps={args.fps}"
-                cmd.extend(["-vf", vf_filters])
-
-            cmd.extend([
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", str(args.crf),
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
-                out_path
-            ])
-
-            result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if result.returncode == 0 and os.path.exists(out_path):
-                out_size_mb = os.path.getsize(out_path) / (1024 * 1024)
-                print(f"     Saved: {out_filename} [{start_sec:.1f}s to {end_sec:.1f}s | Duration: {duration:.1f}s | {out_size_mb:.1f} MB]")
-            else:
-                print(f"     ERROR: Failed to extract segment {seg_idx} for {filename}")
-
-    print(f"\nAll videos processed. Clips saved to '{args.output_dir}'")
+        print(f"\nAll videos processed. Clips saved to '{args.output_dir}'")
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        duration_str = str(duration).split('.')[0]
+        log_file.write(f"\n=== Session Ended: {end_time.strftime('%Y-%m-%d %H:%M:%S')} (ISO: {end_time.isoformat()}) | Duration: {duration_str} ===\n")
+        log_file.flush()
+        log_file.close()
+        print(f"Session log saved to '{log_path}'.")
 
 if __name__ == "__main__":
     args = parse_args()

@@ -24,3 +24,7 @@ wheels/
 # AI Model Files
 *.pt
 
+# Run Logs
+log/
+*.log
+
