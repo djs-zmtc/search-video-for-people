@@ -1,0 +1,16 @@
+# Auto-detect text files and normalize line endings to LF in the repo
+* text=auto
+
+# Ensure Python, shell scripts, and configs always use LF everywhere
+*.py text eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Explicitly treat binary files as binary
+*.png binary
+*.jpg binary
+*.pyd binary
+*.so binary
