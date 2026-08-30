@@ -6,9 +6,11 @@ import torch
 import imageio_ffmpeg
 from ultralytics import YOLO
 
-# Suppress Python-level warnings[cite: 1]
+# Suppress noisy C++ level decode logs cleanly without breaking Python stderr
 os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
 os.environ["AV_LOG_FORCE_NOCOLOR"] = "1"
+if hasattr(cv2, "setLogLevel"):
+    cv2.setLogLevel(0)
 
 # Dynamically select the best available accelerator hardware
 if torch.cuda.is_available():
@@ -22,15 +24,15 @@ print(f"Using compute device: {DEVICE}")
 
 ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
-# Upgrade to extra-large model for superior IR feature detection[cite: 1]
+# Upgrade to extra-large model for superior IR feature detection
 model = YOLO("yolo11x.pt")
 
 INPUT_DIR = "./repaired_videos"
 OUTPUT_DIR = "./person_clips"
 PAD_SECONDS = 15
 STRIDE = 5
-CONF_THRESHOLD = 0.60        # Raised to filter out IR reflections and cobwebs[cite: 1]
-REQUIRED_CONSECUTIVE = 2     # Must detect in 2 sampled frames in a row[cite: 1]
+CONF_THRESHOLD = 0.50        # Balanced threshold for IR night vision & daytime detection
+REQUIRED_CONSECUTIVE = 2     # Must detect in 2 sampled frames in a row
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def merge_intervals(intervals, max_duration):
@@ -49,6 +51,10 @@ def merge_intervals(intervals, max_duration):
         else:
             merged.append((current_start, current_end))
     return merged
+
+if not os.path.exists(INPUT_DIR):
+    print(f"Input directory '{INPUT_DIR}' not found. Please run repair_clips.py or place footage there.")
+    sys.exit(0)
 
 video_extensions = (".mp4", ".mkv", ".avi", ".mov")
 video_files = [f for f in os.listdir(INPUT_DIR) if f.lower().endswith(video_extensions)]
@@ -69,77 +75,87 @@ for idx, filename in enumerate(video_files, 1):
         fps = 25.0
 
     detected_timestamps = []
+    pending_streak = []
     frame_idx = 0
-    consecutive_hits = 0
-
-    # Define low-level file descriptors BEFORE entering try block[cite: 1]
-    stderr_fd = sys.stderr.fileno()
-    saved_stderr = os.dup(stderr_fd)
-    devnull = os.open(os.devnull, os.O_WRONLY)
+    last_timestamp = 0.0
 
     try:
-        os.dup2(devnull, stderr_fd)
-        
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
             frame_idx += 1
+
+            # Use actual presentation timestamp (PTS) to prevent VFR drift; fallback to frame count
+            pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+            if pos_msec > 0:
+                current_time = pos_msec / 1000.0
+            else:
+                current_time = frame_idx / fps
+            last_timestamp = max(last_timestamp, current_time)
+
             if frame_idx % STRIDE != 0:
                 continue
 
             results = model.predict(
                 source=frame,
-                classes=[0],           # 0 = person[cite: 1]
+                classes=[0],           # 0 = person
                 conf=CONF_THRESHOLD,
-                device=DEVICE,         # Dynamically resolved hardware accelerator
+                device=DEVICE,
                 verbose=False
             )
 
             if len(results[0].boxes) > 0:
-                consecutive_hits += 1
-                if consecutive_hits >= REQUIRED_CONSECUTIVE:
-                    timestamp = frame_idx / fps
-                    detected_timestamps.append(timestamp)
+                pending_streak.append(current_time)
+                if len(pending_streak) >= REQUIRED_CONSECUTIVE:
+                    # Flush all accumulated timestamps in streak (including first detection)
+                    detected_timestamps.extend(pending_streak)
+                    pending_streak = []
             else:
-                consecutive_hits = 0
+                pending_streak = []
 
     finally:
-        # Safely restore normal console stderr output[cite: 1]
-        os.dup2(saved_stderr, stderr_fd)
-        os.close(saved_stderr)
-        os.close(devnull)
         cap.release()
 
     if not detected_timestamps:
         print("  -> No person detected.")
         continue
 
-    # Calculate actual decoded duration[cite: 1]
-    video_duration = frame_idx / fps
+    # Deduplicate and sort timestamps
+    detected_timestamps = sorted(list(set(detected_timestamps)))
+    video_duration = last_timestamp if last_timestamp > 0 else (frame_idx / fps)
     raw_events = [(t, t) for t in detected_timestamps]
     segments = merge_intervals(raw_events, video_duration)
 
-    print(f"  -> Found {len(detected_timestamps)} detection frames. Extracting {len(segments)} padded segment(s)...")
+    print(f"  -> Found {len(detected_timestamps)} detection points. Extracting {len(segments)} padded segment(s)...")
 
     for seg_idx, (start_sec, end_sec) in enumerate(segments, 1):
         duration = end_sec - start_sec
-        out_filename = f"{name_stem}_person_{seg_idx:02d}{ext}"
+        # Always output standard .mp4 for clean playable clips
+        out_filename = f"{name_stem}_person_{seg_idx:02d}.mp4"
         out_path = os.path.join(OUTPUT_DIR, out_filename)
 
+        # Re-encode video and audio to guarantee frame-accurate cuts and zero keyframe macroblocking
         cmd = [
             ffmpeg_exe, "-y",
             "-err_detect", "ignore_err",
             "-ss", f"{start_sec:.2f}",
             "-i", video_path,
             "-t", f"{duration:.2f}",
-            "-c", "copy",
-            "-avoid_negative_ts", "make_zero",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "22",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
             out_path
         ]
 
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"     Saved: {out_filename} [{start_sec:.1f}s to {end_sec:.1f}s | Duration: {duration:.1f}s]")
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if result.returncode == 0 and os.path.exists(out_path):
+            print(f"     Saved: {out_filename} [{start_sec:.1f}s to {end_sec:.1f}s | Duration: {duration:.1f}s]")
+        else:
+            print(f"     ERROR: Failed to extract segment {seg_idx} for {filename}")
 
 print("\nAll videos processed. Padded clips saved to ./person_clips")
