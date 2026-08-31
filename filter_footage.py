@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import argparse
 import subprocess
 from datetime import datetime
@@ -90,7 +91,7 @@ def parse_args():
         "--crf",
         type=int,
         default=22,
-        help="H.264 CRF quality value, 0-51 where lower is higher quality (default: 22)"
+        help="H.264 CRF quality level, 0-51 where lower is higher quality (default: 22)"
     )
     parser.add_argument(
         "--device",
@@ -142,6 +143,48 @@ def format_time_hms(seconds):
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:05.2f}"
 
+def build_camera_manifest(video_files):
+    """
+    Pre-parse video files to detect unique camera/stream prefixes (e.g. name_{GUID}_)
+    and assign concise aliases like [CAM-01], [CAM-02], etc.
+    """
+    guid_pattern = re.compile(r'^(.*\{[0-9a-fA-F\-]{32,38}\}_?)(.*)$')
+    fallback_bracket_pattern = re.compile(r'^(.*\{[^\}]+\}_?)(.*)$')
+
+    prefixes = []
+    file_mapping = {}
+
+    for filename in video_files:
+        match = guid_pattern.match(filename) or fallback_bracket_pattern.match(filename)
+        if match:
+            prefix, remainder = match.group(1), match.group(2)
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+            file_mapping[filename] = (prefix, remainder)
+        else:
+            file_mapping[filename] = (None, filename)
+
+    prefix_to_alias = {p: f"[CAM-{idx:02d}]" for idx, p in enumerate(prefixes, 1)}
+
+    manifest_lines = []
+    if prefixes:
+        manifest_lines.append("--- Active Camera Streams ---")
+        for p in prefixes:
+            alias = prefix_to_alias[p]
+            clean_name = p.rstrip('_')
+            manifest_lines.append(f" {alias} {clean_name}")
+        manifest_lines.append("-----------------------------")
+
+    file_to_display = {}
+    for filename, (prefix, remainder) in file_mapping.items():
+        if prefix and prefix in prefix_to_alias:
+            alias = prefix_to_alias[prefix]
+            file_to_display[filename] = f"{alias} {remainder}"
+        else:
+            file_to_display[filename] = filename
+
+    return file_to_display, manifest_lines
+
 def merge_intervals(intervals, max_duration, pad_seconds):
     if not intervals:
         return []
@@ -166,8 +209,24 @@ def process_footage(args):
     log_filename = f"person-found_{datestamp}.log"
     log_path = os.path.join(args.log_dir, log_filename)
 
+    if not os.path.exists(args.input_dir):
+        print(f"Input directory '{args.input_dir}' not found. Please run repair_clips.py or place footage there.")
+        return
+
+    video_extensions = (".mp4", ".mkv", ".avi", ".mov")
+    video_files = [f for f in os.listdir(args.input_dir) if f.lower().endswith(video_extensions)]
+
+    if not video_files:
+        print(f"No video files found in '{args.input_dir}'.")
+        return
+
+    file_to_display, manifest_lines = build_camera_manifest(video_files)
+
     log_file = open(log_path, "w", encoding="utf-8")
-    log_file.write(f"=== Session Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')} (ISO: {start_time.isoformat()}) ===\n\n")
+    log_file.write(f"=== Session Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')} (ISO: {start_time.isoformat()}) ===\n")
+    if manifest_lines:
+        log_file.write("\n".join(manifest_lines) + "\n")
+    log_file.write("\n")
     log_file.flush()
 
     try:
@@ -179,23 +238,15 @@ def process_footage(args):
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         os.makedirs(args.output_dir, exist_ok=True)
 
-        if not os.path.exists(args.input_dir):
-            print(f"Input directory '{args.input_dir}' not found. Please run repair_clips.py or place footage there.")
-            return
-
-        video_extensions = (".mp4", ".mkv", ".avi", ".mov")
-        video_files = [f for f in os.listdir(args.input_dir) if f.lower().endswith(video_extensions)]
-
-        if not video_files:
-            print(f"No video files found in '{args.input_dir}'.")
-            return
-
-        print(f"Session log: {log_path}")
+        if manifest_lines:
+            print("\n".join(manifest_lines))
+        print(f"\nSession log: {log_path}")
         print(f"Found {len(video_files)} video(s) to process.\n")
 
         for idx, filename in enumerate(video_files, 1):
             video_path = os.path.join(args.input_dir, filename)
             name_stem, _ = os.path.splitext(filename)
+            display_name = file_to_display.get(filename, filename)
             print(f"[{idx}/{len(video_files)}] Scanning: {filename}...")
 
             cap = cv2.VideoCapture(video_path)
@@ -271,10 +322,11 @@ def process_footage(args):
                 first_detect = min(detections_in_segment) if detections_in_segment else start_sec
 
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                clip_label = f"person_{seg_idx:02d}.mp4"
                 log_entry = (
-                    f"[{now_str}] Source: {filename} | "
-                    f"Detection Timestamp: {format_time_hms(first_detect)} ({first_detect:.2f}s) | "
-                    f"Clip: {out_filename} (Segment: {format_time_hms(start_sec)} to {format_time_hms(end_sec)})\n"
+                    f"[{now_str}] {display_name} | "
+                    f"Detected: {format_time_hms(first_detect)} ({first_detect:.2f}s) | "
+                    f"Clip: {clip_label} ({format_time_hms(start_sec)} to {format_time_hms(end_sec)})\n"
                 )
                 log_file.write(log_entry)
                 log_file.flush()
