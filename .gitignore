@@ -28,3 +28,6 @@ wheels/
 log/
 *.log
 
+# Pytest & Testing Fixtures/Artifacts
+.pytest_cache/
+tests/fixtures/
